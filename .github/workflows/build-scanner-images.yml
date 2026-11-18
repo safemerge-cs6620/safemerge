@@ -1,0 +1,63 @@
+name: Build and push scanner images
+
+# Runs when scanner code changes on main, and can also be started by hand from the Actions tab.
+# This workflow only builds and pushes images and prints their tags.
+# It never runs terraform apply: new tags are applied by hand in terraform/envs/prod.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scanners/**"
+      - ".github/workflows/build-scanner-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # Learner Lab cannot create IAM roles, so this uses session credentials
+      # stored as repository secrets. They must be refreshed each lab session.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tag with the short commit SHA, never "latest" (the repositories are immutable).
+      # --provenance=false keeps the image a plain single manifest, which Lambda requires.
+      - name: Build and push the scanner images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_SHA::7}"
+          for NAME in sast pentest; do
+            REPO="safemerge-$NAME"
+            IMAGE="$REGISTRY/$REPO:$TAG"
+            # Immutable tags: re-running the same commit must not push the same tag again
+            if aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$TAG" > /dev/null 2>&1; then
+              echo "$IMAGE already exists, skipping"
+            else
+              docker build --platform linux/amd64 --provenance=false -t "$IMAGE" "scanners/$NAME"
+              docker push "$IMAGE"
+              echo "Pushed $IMAGE"
+            fi
+          done
+          {
+            echo "### Image tags for Terraform"
+            echo ""
+            echo "sast_image_tag = \"$TAG\""
+            echo "pentest_image_tag = \"$TAG\""
+          } >> "$GITHUB_STEP_SUMMARY"

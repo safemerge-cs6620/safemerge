@@ -61,3 +61,11 @@ output "pentest_sg_id" {
 output "staging_task_definition_arn" {
   value = module.ecs.staging_task_definition_arn
 }
+
+output "deploy_gate_arn" {
+  value = module.deploy_gate.state_machine_arn
+}
+
+output "deploy_gate_name" {
+  value = module.deploy_gate.state_machine_name
+}

@@ -19,7 +19,7 @@ SafeMerge is a security platform for software teams that use AI coding assistant
 | ECS Fargate | Works | Staging and pentest run as Fargate tasks |
 | CloudFront | Blocked | Dashboard is served through API Gateway |
 | Cognito | Blocked | GitHub OAuth login with an API Gateway Lambda authorizer |
-| Step Functions starting Fargate | Not yet tested | Fallback: Lambda starts the task, EventBridge task-stopped event triggers the verdict |
+| Step Functions starting Fargate | Works (tested in S2-1, and in prod at about 1 min 45 s per gate run) | Deploy gate uses ecs:runTask.sync for the pentest task |
 | Session credentials | Expire every few hours | Refresh GitHub Actions secrets each session |
 | S3 bucket creation in Terraform | Blocked (object lock read is denied) | Create buckets with a CLI script, then manage their settings in Terraform |
 | Lab resets | Can delete everything in the account | Every resource must be in Terraform or a script, so it can be rebuilt |
@@ -62,13 +62,26 @@ Changes need the owner's approval and an update to this file in the same pull re
 ```
 `context` is `safemerge/sast` or `safemerge/deploy-gate`. `state` is `pending`, `success`, `failure`, or `error`.
 
+### Pentest exit codes (owner: Aniket)
+`scanners/pentest/run-scan.sh` exits with:
+
+| Exit code | Meaning | Gate result |
+|---|---|---|
+| 0 | Scan ran, no HIGH failures | Pass |
+| 1 | Scan ran, at least one result with status FAIL and severity HIGH | Block the production deploy (`failure`) |
+| 2 | Staging unreachable | `error` |
+| 3 | Pentest server did not start | `error` |
+
+### Pentest scan record (owner: Srujan)
+Each deploy gate run saves one Scans item with `type = "PENTEST"`, `sha`, `status` (`pass`, `fail`, or `error`), per-test counts (`passed`, `failed`, `warnings`), and `reportKey`. The full JSON report goes to S3 at `reports/{repo}/{scanId}.json`.
+
 ### DynamoDB tables (owner: Srujan)
 | Table | Partition key | Sort key | Main attributes |
 |---|---|---|---|
 | Repos | repo | none | severity threshold, staging allowlist, alert email |
-| Scans | repo | scanTime#scanId | type, sha, pr, status, severity counts, reportKey, ttl (90 days) |
-| Scans GSI | repo#pr | scanTime | latest scan for a PR |
-| Findings | repo | filePath#fingerprint | ruleId, severity, line, open or fixed, firstSeenSha, lastSeenSha, fixedAt, ttl |
+| Scans | repo | scanKey (scanTime#scanId) | type, sha, pr, status, severity counts, reportKey, ttl (90 days) |
+| Scans GSI `byPr` | repoPr (repo#pr) | scanTime | latest scan for a PR |
+| Findings | repo | findingKey (filePath#fingerprint) | ruleId, severity, line, open or fixed, firstSeenSha, lastSeenSha, fixedAt, ttl |
 
 Fingerprint = hash of rule ID + file path + normalized code line, without the line number, so moved code is not reported as new.
 
@@ -83,10 +96,11 @@ Fingerprint = hash of rule ID + file path + normalized code line, without the li
 
 ## Conventions
 - Tags on every resource: `project=safemerge`, `env=prod|dev`, `owner=<name>`. Names start with `sm-<env>-`.
-- Build images with `--platform linux/amd64`.
+- Build images with `--platform linux/amd64`. Lambda images also need `--provenance=false`.
 - Each person tests in their own Learner Lab account with their own Terraform state. Only Srujan applies to production.
+- New image tags reach production through a pull request that updates the tag variable in `terraform/variables.tf`, then a manual apply. CI never runs `terraform apply`.
 - After testing, stop tasks or run `terraform destroy`, then end the lab session.
-- Buckets are created with CLI scripts in the repo (see `terraform/bootstrap/create-state-bucket.sh`).
+- Buckets are created with CLI scripts in the repo (see `terraform/bootstrap/`).
 
 ## Definition of done
 1. Tested in your own Learner Lab account

@@ -16,7 +16,6 @@ data "aws_iam_role" "lab" {
 
 data "aws_caller_identity" "me" {}
 
-
 module "queues" {
   source = "./modules/queues"
   prefix = local.prefix
@@ -43,8 +42,23 @@ module "ecr" {
 }
 
 module "ecs" {
-  source       = "./modules/ecs"
+  source        = "./modules/ecs"
+  prefix        = local.prefix
+  lab_role_arn  = data.aws_iam_role.lab.arn
+  demo_image    = "${module.ecr.repository_urls["demo-api"]}:${var.demo_image_tag}"
+  pentest_image = "${module.ecr.repository_urls["safemerge-pentest"]}:${var.pentest_image_tag}"
+}
+
+module "deploy_gate" {
+  source       = "./modules/deploy-gate"
   prefix       = local.prefix
   lab_role_arn = data.aws_iam_role.lab.arn
-  demo_image   = "${module.ecr.repository_urls["demo-api"]}:${var.demo_image_tag}"
+  task_tags = {
+    project = "safemerge"
+    env     = var.env
+    owner   = var.owner
+  }
+
+  # The gate looks up the cluster, security groups, and pentest task definition by name
+  depends_on = [module.ecs]
 }

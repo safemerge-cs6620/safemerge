@@ -50,10 +50,10 @@ The SAST worker lists the PR's changed files itself, so the webhook replies with
 
 ### Step Functions input (owner: Aniket)
 ```json
-{ "repo": "safemerge-cs6620/safemerge-demo-api", "commitSha": "abc123",
-  "image": "<account>.dkr.ecr.us-east-1.amazonaws.com/demo-api:abc123", "mode": "deploy" }
+{ "repo": "safemerge-cs6620/safemerge-demo-api", "commitSha": "<full 40-character SHA>",
+  "image": "<account>.dkr.ecr.us-east-1.amazonaws.com/demo-api:abc1234", "mode": "deploy" }
 ```
-`mode` is `deploy` or `nightly`.
+commitSha must be the full 40-character commit SHA ($GITHUB_SHA in GitHub Actions), because GitHub's status API and the notifier require it. The image tag stays the short SHA.
 
 ### Notifier input (owner: Shahana)
 ```json
@@ -98,6 +98,6 @@ Fingerprint = hash of rule ID + file path + normalized code line, without the li
 5. This file updated if an interface changed
 
 ## GitHub settings (not in Terraform)
-Demo repo branch protection on main:
+Demo repo branch protection on main(turn on only after the webhook, SAST worker, and notifier are live in prod; otherwise no demo-api PR can merge):
 - Require status checks to pass before merging: safemerge/sast
 - Do not allow bypassing the above settings

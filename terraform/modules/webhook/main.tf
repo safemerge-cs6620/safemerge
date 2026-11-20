@@ -1,7 +1,7 @@
 # Zip the handler. It has no npm dependencies (AWS SDK v3 is in the Node 20 runtime).
 data "archive_file" "webhook" {
   type        = "zip"
-  source_file = "${path.module}/../../../lambdas/webhook/index.mjs"
+  source_file = "${path.module}/../../../services/webhook/index.mjs"
   output_path = "${path.root}/.build/webhook.zip"
 }
 

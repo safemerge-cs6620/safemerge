@@ -43,8 +43,10 @@ Changes need the owner's approval and an update to this file in the same pull re
 ### SQS scan job message (owner: Shahana)
 ```json
 { "repo": "safemerge-cs6620/safemerge-demo-api", "pr": 42, "headSha": "abc123", "baseSha": "def456",
-  "files": ["src/routes/users.js"], "deliveryId": "github-delivery-uuid" }
+  "deliveryId": "github-delivery-uuid" }
 ```
+The SAST worker lists the PR's changed files itself, so the webhook replies within GitHub's 10-second limit.
+
 
 ### Step Functions input (owner: Aniket)
 ```json

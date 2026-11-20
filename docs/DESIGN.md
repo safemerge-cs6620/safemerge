@@ -94,3 +94,8 @@ Fingerprint = hash of rule ID + file path + normalized code line, without the li
 3. Pull request reviewed by the area steward and merged
 4. Applied to production by Srujan
 5. This file updated if an interface changed
+
+## GitHub settings (not in Terraform)
+Demo repo branch protection on main:
+- Require status checks to pass before merging: safemerge/sast
+- Do not allow bypassing the above settings

@@ -1,6 +1,6 @@
 data "archive_file" "notifier" {
   type        = "zip"
-  source_file = "${path.module}/../../../lambdas/notifier/index.mjs"
+  source_file = "${path.module}/../../../services/notifier/index.mjs"
   output_path = "${path.root}/.build/notifier.zip"
 }
 

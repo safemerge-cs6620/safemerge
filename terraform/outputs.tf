@@ -69,3 +69,7 @@ output "deploy_gate_arn" {
 output "deploy_gate_name" {
   value = module.deploy_gate.state_machine_name
 }
+
+output "dashboard_url" {
+  value = module.dashboard.dashboard_url
+}

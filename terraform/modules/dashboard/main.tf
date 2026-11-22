@@ -1,5 +1,6 @@
-# Dashboard hosting. CloudFront is blocked in Learner Lab, so the page is served
-# by a Lambda behind an API Gateway HTTP API, which provides the public HTTPS URL.
+# Dashboard hosting and login. CloudFront and Cognito are blocked in Learner Lab, so the
+# page is served by a Lambda behind an API Gateway HTTP API (public HTTPS URL), and the
+# Lambda handles GitHub OAuth login itself with a signed session cookie.
 
 data "archive_file" "dashboard" {
   type        = "zip"
@@ -22,6 +23,14 @@ resource "aws_lambda_function" "dashboard" {
   timeout          = 10
   memory_size      = 256
 
+  environment {
+    variables = {
+      OAUTH_SECRET_ARN   = var.oauth_secret_arn
+      SESSION_SECRET_ARN = var.session_secret_arn
+      ALLOWED_USERS      = var.allowed_users
+    }
+  }
+
   depends_on = [aws_cloudwatch_log_group.dashboard]
 }
 
@@ -40,6 +49,14 @@ resource "aws_apigatewayv2_integration" "dashboard" {
 resource "aws_apigatewayv2_route" "page" {
   api_id    = aws_apigatewayv2_api.dashboard.id
   route_key = "GET /"
+  target    = "integrations/${aws_apigatewayv2_integration.dashboard.id}"
+}
+
+# Login flow routes, all handled by the same Lambda
+resource "aws_apigatewayv2_route" "auth" {
+  for_each  = toset(["GET /login", "GET /callback", "GET /logout"])
+  api_id    = aws_apigatewayv2_api.dashboard.id
+  route_key = each.value
   target    = "integrations/${aws_apigatewayv2_integration.dashboard.id}"
 }
 

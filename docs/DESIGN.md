@@ -17,8 +17,8 @@ SafeMerge is a security platform for software teams that use AI coding assistant
 |---|---|---|
 | IAM | Only LabRole | Every Lambda, ECS task, Step Functions state machine, and scheduler uses LabRole. Terraform never creates IAM roles. |
 | ECS Fargate | Works | Staging and pentest run as Fargate tasks |
-| CloudFront | Blocked | Dashboard is served through API Gateway |
-| Cognito | Blocked | GitHub OAuth login with an API Gateway Lambda authorizer |
+| CloudFront | Blocked | Dashboard is served by a Lambda behind an API Gateway HTTP API (public HTTPS URL) |
+| Cognito | Blocked | GitHub OAuth login in the dashboard Lambda: allowlist of team usernames, HMAC-signed HttpOnly session cookie (8 hours), state cookie against forged logins |
 | Step Functions starting Fargate | Works (tested in S2-1, and in prod at about 1 min 45 s per gate run) | Deploy gate uses ecs:runTask.sync for the pentest task |
 | Session credentials | Expire every few hours | Refresh GitHub Actions secrets each session |
 | S3 bucket creation in Terraform | Blocked (object lock read is denied) | Create buckets with a CLI script, then manage their settings in Terraform |
@@ -28,7 +28,7 @@ Region: us-east-1.
 
 ## Architecture
 - **GitHub** sends signed webhooks to **API Gateway** (HTTPS). GitHub Actions builds images.
-- **4 Lambdas:** webhook receiver, SAST worker (container image), dashboard API, notifier.
+- **4 Lambdas:** webhook receiver, SAST worker (container image), dashboard (page, login, and API), notifier.
 - **SQS** with a **dead-letter queue**: 3 retries, then the notifier posts an `error` status. PR scans fail closed.
 - **Step Functions** deploy gate: register a task definition with the new image, start staging, wait until healthy and read its private IP, run the pentest task and wait, stop staging. Every state has a timeout and a Catch that routes to teardown.
 - **ECS Fargate**, two separate tasks in public subnets. `staging-sg` allows TCP 4000 only from `pentest-sg`. The pentest targets staging's private IP. Public IPs are for outbound only. No NAT Gateway.
@@ -46,7 +46,6 @@ Changes need the owner's approval and an update to this file in the same pull re
   "deliveryId": "github-delivery-uuid" }
 ```
 The SAST worker lists the PR's changed files itself, so the webhook replies within GitHub's 10-second limit.
-
 
 ### Step Functions input (owner: Aniket)
 ```json
@@ -94,7 +93,8 @@ Fingerprint = hash of rule ID + file path + normalized code line, without the li
 | S3 report path | `reports/{repo}/{scanId}.json` | Srujan |
 | ECR repositories | `safemerge-sast`, `safemerge-pentest`, `demo-api` | Aniket |
 | Image tags | Commit SHA only, never `latest` | Aniket |
-| Secrets | `sm/github-token`, `sm/webhook-secret` | Srujan |
+| Secrets | `sm/github-token`, `sm/webhook-secret`, `sm/github-oauth`, `sm/session-secret` | Srujan |
+| Dashboard login allowlist | `srujan-codes`, `shahana-neu`, `aniketnandi` | Srujan |
 
 ## Conventions
 - Tags on every resource: `project=safemerge`, `env=prod|dev`, `owner=<name>`. Names start with `sm-<env>-`.
@@ -112,6 +112,6 @@ Fingerprint = hash of rule ID + file path + normalized code line, without the li
 5. This file updated if an interface changed
 
 ## GitHub settings (not in Terraform)
-Demo repo branch protection on main:
-- Require status checks to pass before merging: safemerge/sast
-- Do not allow bypassing the above settings
+Demo repo branch protection on `main`:
+- Now: require a pull request with 1 approval.
+- Once the webhook, SAST worker, and notifier run in production: also require the `safemerge/sast` status check, with no bypassing.

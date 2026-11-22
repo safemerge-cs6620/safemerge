@@ -64,7 +64,10 @@ module "deploy_gate" {
 }
 
 module "dashboard" {
-  source       = "./modules/dashboard"
-  prefix       = local.prefix
-  lab_role_arn = data.aws_iam_role.lab.arn
+  source             = "./modules/dashboard"
+  prefix             = local.prefix
+  lab_role_arn       = data.aws_iam_role.lab.arn
+  oauth_secret_arn   = module.secrets.github_oauth_arn
+  session_secret_arn = module.secrets.session_secret_arn
+  allowed_users      = "srujan-codes,shahana-neu,aniketnandi"
 }

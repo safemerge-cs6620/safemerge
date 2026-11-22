@@ -62,3 +62,9 @@ module "deploy_gate" {
   # The gate looks up the cluster, security groups, and pentest task definition by name
   depends_on = [module.ecs]
 }
+
+module "dashboard" {
+  source       = "./modules/dashboard"
+  prefix       = local.prefix
+  lab_role_arn = data.aws_iam_role.lab.arn
+}

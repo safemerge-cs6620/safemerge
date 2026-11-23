@@ -61,7 +61,7 @@ The SAST worker lists the PR's changed files itself, so the webhook replies with
   "targetUrl": "https://<dashboard>/scans/<scanId>",
   "comments": [{ "path": "src/app.js", "line": 12, "body": "Hardcoded secret" }] }
 ```
-`context` is `safemerge/sast` or `safemerge/deploy-gate`. `state` is `pending`, `success`, `failure`, or `error`.
+`context` is `safemerge/sast` or `safemerge/deploy-gate`. `state` is `pending`, `success`, `failure`, or `error`. The notifier only accepts a full 40-character `sha`.
 
 ### Pentest exit codes (owner: Aniket)
 `scanners/pentest/run-scan.sh` exits with:
@@ -73,8 +73,35 @@ The SAST worker lists the PR's changed files itself, so the webhook replies with
 | 2 | Staging unreachable | `error` |
 | 3 | Pentest server did not start | `error` |
 
+### SAST scan record (owner: Srujan)
+The SAST worker saves one Scans item per scan:
+```json
+{
+  "repo": "safemerge-cs6620/safemerge-demo-api",
+  "scanKey": "2026-11-24T15:04:05.123Z#3f2b9c1e-...",
+  "scanId": "3f2b9c1e-...",
+  "scanTime": "2026-11-24T15:04:05.123Z",
+  "repoPr": "safemerge-cs6620/safemerge-demo-api#42",
+  "type": "SAST",
+  "pr": 42,
+  "sha": "<full 40-character SHA>",
+  "status": "fail",
+  "counts": { "HIGH": 2, "MEDIUM": 1, "LOW": 0 },
+  "reportKey": "reports/safemerge-cs6620/safemerge-demo-api/3f2b9c1e-....json",
+  "deliveryId": "<GitHub delivery ID>",
+  "ttl": 1798000000
+}
+```
+- `repo` + `scanKey` are the table keys. `scanKey` is `scanTime#scanId`, with `scanTime` in ISO 8601 UTC, so scans sort by time.
+- `repoPr` + `scanTime` feed the `byPr` index (latest scan for a PR).
+- `status` is `fail` if any HIGH finding, `pass` otherwise, and `error` if the scan itself broke.
+- `ttl` is Unix time in seconds, set to now + 90 days.
+- Each finding in the S3 report keeps `ruleId`, `severity`, `file`, `line`, and the matched code line, which S2-4 uses for fingerprints.
+
+**Duplicate deliveries:** GitHub can resend a webhook. Before scanning, the worker writes a marker item to the Scans table with `repo = "delivery"`, `scanKey = <deliveryId>`, a 7-day `ttl`, and the condition `attribute_not_exists(scanKey)`. If the condition fails, the delivery was already handled, and the worker skips it.
+
 ### Pentest scan record (owner: Srujan)
-Each deploy gate run saves one Scans item with `type = "PENTEST"`, `sha`, `status` (`pass`, `fail`, or `error`), per-test counts (`passed`, `failed`, `warnings`), and `reportKey`. The full JSON report goes to S3 at `reports/{repo}/{scanId}.json`.
+Each deploy gate run saves one Scans item with `type = "PENTEST"`, `sha`, `status` (`pass`, `fail`, or `error`), per-test counts (`passed`, `failed`, `warnings`), and `reportKey`. It uses the same `repo`, `scanKey`, `scanId`, `scanTime`, and `ttl` fields as the SAST record, without `pr` or `repoPr`. The full JSON report goes to S3 at `reports/{repo}/{scanId}.json`.
 
 ### DynamoDB tables (owner: Srujan)
 | Table | Partition key | Sort key | Main attributes |
@@ -90,6 +117,7 @@ Fingerprint = hash of rule ID + file path + normalized code line, without the li
 | Item | Value | Owner |
 |---|---|---|
 | Commit status contexts | `safemerge/sast`, `safemerge/deploy-gate` | Shahana |
+| Notifier function | `sm-<env>-notifier` (callers read it from the `NOTIFIER_FUNCTION_NAME` environment variable) | Shahana |
 | S3 report path | `reports/{repo}/{scanId}.json` | Srujan |
 | ECR repositories | `safemerge-sast`, `safemerge-pentest`, `demo-api` | Aniket |
 | Image tags | Commit SHA only, never `latest` | Aniket |

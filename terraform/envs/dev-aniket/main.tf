@@ -36,8 +36,9 @@ module "ecs" {
 module "deploy_gate" {
   source = "../../modules/deploy-gate"
 
-  prefix       = var.prefix
-  lab_role_arn = data.aws_iam_role.lab.arn
+  prefix                 = var.prefix
+  lab_role_arn           = data.aws_iam_role.lab.arn
+  notifier_function_name = "${var.prefix}-notifier"
   task_tags = {
     project = "safemerge"
     env     = "dev"

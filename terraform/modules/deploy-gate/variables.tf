@@ -8,6 +8,11 @@ variable "lab_role_arn" {
   description = "LabRole ARN, used by the state machine and as the task role and execution role"
 }
 
+variable "notifier_function_name" {
+  type        = string
+  description = "Name of the notifier Lambda that posts commit statuses (sm-<env>-notifier)"
+}
+
 variable "task_tags" {
   type        = map(string)
   default     = {}

@@ -54,6 +54,8 @@ The SAST worker lists the PR's changed files itself, so the webhook replies with
 ```
 `mode` is `deploy` or `nightly`.
 
+`commitSha` is the full 40-character `GITHUB_SHA`, because the notifier only accepts a full sha. The image tag stays the 7-character short sha. The deploy gate posts the `safemerge/deploy-gate` commit status itself through the notifier (the `notifier_function_name` variable): `success` when the pentest exits 0 and staging is stopped, `failure` when it exits 1, and `error` for anything else (exit 2 or 3, staging not healthy, a teardown or Step Functions error).
+
 ### Notifier input (owner: Shahana)
 ```json
 { "repo": "safemerge-cs6620/safemerge-demo-api", "pr": 42, "sha": "abc123", "context": "safemerge/sast",

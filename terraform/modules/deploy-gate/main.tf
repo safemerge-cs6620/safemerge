@@ -5,6 +5,9 @@
 # Input:  { "repo": "...", "commitSha": "...", "image": "<registry>/demo-api:<tag>", "mode": "deploy" }
 # Result: the execution SUCCEEDS only if the pentest task exits with code 0.
 #         Any other outcome FAILS, and staging is stopped before the failure is reported.
+# Status: before it ends, the gate posts the safemerge/deploy-gate commit status through the
+#         notifier (var.notifier_function_name): success for exit 0, failure for exit 1 (HIGH
+#         finding), error for anything else. commitSha must be the full 40-character sha.
 
 data "aws_region" "current" {}
 
@@ -59,7 +62,7 @@ locals {
   catch_before_staging = [{
     ErrorEquals = ["States.ALL"]
     ResultPath  = "$.error"
-    Next        = "FailBeforeStaging"
+    Next        = "NotifyBeforeStagingError"
   }]
 
   catch_with_teardown = [{
@@ -67,6 +70,79 @@ locals {
     ResultPath  = "$.error"
     Next        = "StopStagingAfterError"
   }]
+
+  # Link to this execution in the Step Functions console, sent as the status target URL
+  execution_url = "States.Format('https://console.aws.amazon.com/states/home?region=${data.aws_region.current.name}#/v2/executions/details/{}', $$.Execution.Id)"
+
+  # One state per commit status the gate can post. Every one calls the notifier with the
+  # same input shape and then moves on to "next". If the call fails, "on_error" is used,
+  # so the execution still ends in its original result.
+  notify_states = { for name, cfg in {
+    NotifyPassed = {
+      state       = "success"
+      description = "Pentest passed on staging"
+      next        = "GatePassed"
+      on_error    = "StatusNotPosted"
+    }
+    NotifyHighFindings = {
+      state       = "failure"
+      description = "Pentest found HIGH severity issues"
+      next        = "GateFailed"
+      on_error    = "GateFailed"
+    }
+    NotifyError = {
+      state       = "error"
+      description = "Deploy gate error, see the Step Functions execution"
+      next        = "GateFailed"
+      on_error    = "GateFailed"
+    }
+    NotifyTeardownError = {
+      state       = "error"
+      description = "Pentest finished but staging could not be stopped"
+      next        = "TeardownFailed"
+      on_error    = "TeardownFailed"
+    }
+    NotifyBeforeStagingError = {
+      state       = "error"
+      description = "Staging could not be started"
+      next        = "FailBeforeStaging"
+      on_error    = "FailBeforeStaging"
+    }
+    NotifyStagingStopped = {
+      state       = "error"
+      description = "Staging stopped before it became healthy"
+      next        = "StagingStopped"
+      on_error    = "StagingStopped"
+    }
+    } : name => {
+    Type           = "Task"
+    Resource       = "arn:aws:states:::lambda:invoke"
+    TimeoutSeconds = 30
+    Parameters = {
+      FunctionName = var.notifier_function_name
+      Payload = {
+        "repo.$"      = "$.repo"
+        "sha.$"       = "$.commitSha"
+        context       = "safemerge/deploy-gate"
+        state         = cfg.state
+        description   = cfg.description
+        "targetUrl.$" = local.execution_url
+      }
+    }
+    Retry = [{
+      ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"]
+      IntervalSeconds = 2
+      MaxAttempts     = 3
+      BackoffRate     = 2
+    }]
+    ResultPath = null
+    Catch = [{
+      ErrorEquals = ["States.ALL"]
+      ResultPath  = "$.notifyError"
+      Next        = cfg.on_error
+    }]
+    Next = cfg.next
+  } }
 }
 
 resource "aws_sfn_state_machine" "gate" {
@@ -76,7 +152,7 @@ resource "aws_sfn_state_machine" "gate" {
   definition = jsonencode({
     Comment = "SafeMerge deploy gate: staging + pentest, always tears staging down"
     StartAt = "RegisterStagingTaskDefinition"
-    States = {
+    States = merge({
 
       # 1. A running task cannot have its image overridden, so every new image
       #    needs a new task definition revision. This is how tasks get the new image.
@@ -195,7 +271,7 @@ resource "aws_sfn_state_machine" "gate" {
           {
             Variable     = "$.described.Tasks[0].LastStatus"
             StringEquals = "STOPPED"
-            Next         = "StagingStopped"
+            Next         = "NotifyStagingStopped"
           },
           {
             Variable                 = "$.poll.count"
@@ -256,11 +332,31 @@ resource "aws_sfn_state_machine" "gate" {
           "exitCode.$" = "$.Containers[0].ExitCode"
         }
         ResultPath = "$.pentest"
-        Catch      = local.catch_with_teardown
-        Next       = "StopStaging"
+        # A non-zero exit code from the container ends the task with States.TaskFailed.
+        # Remember that, so the exit code is read only for this failure and not for others.
+        Catch = [
+          {
+            ErrorEquals = ["States.TaskFailed"]
+            ResultPath  = "$.error"
+            Next        = "MarkPentestFailed"
+          },
+          {
+            ErrorEquals = ["States.ALL"]
+            ResultPath  = "$.error"
+            Next        = "StopStagingAfterError"
+          }
+        ]
+        Next = "StopStaging"
       }
 
-      # 5a. Success path: stop staging, then succeed
+      MarkPentestFailed = {
+        Type       = "Pass"
+        Result     = true
+        ResultPath = "$.pentestTaskFailed"
+        Next       = "StopStagingAfterError"
+      }
+
+      # 5a. Success path: stop staging, post the success status, then succeed
       StopStaging = {
         Type           = "Task"
         Resource       = "arn:aws:states:::aws-sdk:ecs:stopTask"
@@ -270,9 +366,9 @@ resource "aws_sfn_state_machine" "gate" {
         Catch = [{
           ErrorEquals = ["States.ALL"]
           ResultPath  = "$.error"
-          Next        = "TeardownFailed"
+          Next        = "NotifyTeardownError"
         }]
-        Next = "GatePassed"
+        Next = "NotifyPassed"
       }
 
       # 5b. Failure path: stop staging first, then fail with the original error
@@ -285,9 +381,47 @@ resource "aws_sfn_state_machine" "gate" {
         Catch = [{
           ErrorEquals = ["States.ALL"]
           ResultPath  = "$.teardownError"
-          Next        = "GateFailed"
+          Next        = "ClassifyFailure"
         }]
-        Next = "GateFailed"
+        Next = "ClassifyFailure"
+      }
+
+      # 5c. Staging is stopped. Decide which status to post. Only a failed pentest task has an
+      #     exit code in its Cause (a JSON string), so only that case is parsed.
+      ClassifyFailure = {
+        Type = "Choice"
+        Choices = [{
+          Variable  = "$.pentestTaskFailed"
+          IsPresent = true
+          Next      = "ParsePentestFailure"
+        }]
+        Default = "NotifyError"
+      }
+
+      ParsePentestFailure = {
+        Type       = "Pass"
+        Parameters = { "task.$" = "States.StringToJson($.error.Cause)" }
+        ResultPath = "$.pentestFailure"
+        Next       = "CheckPentestExitCode"
+      }
+
+      # Exit 1 = a HIGH test failed (failure). Exit 2, exit 3 and a missing exit code are errors.
+      CheckPentestExitCode = {
+        Type = "Choice"
+        Choices = [{
+          And = [
+            { Variable = "$.pentestFailure.task.Containers[0].ExitCode", IsPresent = true },
+            { Variable = "$.pentestFailure.task.Containers[0].ExitCode", NumericEquals = 1 }
+          ]
+          Next = "NotifyHighFindings"
+        }]
+        Default = "NotifyError"
+      }
+
+      StatusNotPosted = {
+        Type  = "Fail"
+        Error = "StatusNotPosted"
+        Cause = "The pentest passed but the commit status could not be posted."
       }
 
       GatePassed = {
@@ -317,6 +451,6 @@ resource "aws_sfn_state_machine" "gate" {
         Error = "TeardownFailed"
         Cause = "The pentest finished but the staging task could not be stopped."
       }
-    }
+    }, local.notify_states)
   })
 }

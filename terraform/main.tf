@@ -50,9 +50,10 @@ module "ecs" {
 }
 
 module "deploy_gate" {
-  source       = "./modules/deploy-gate"
-  prefix       = local.prefix
-  lab_role_arn = data.aws_iam_role.lab.arn
+  source                 = "./modules/deploy-gate"
+  prefix                 = local.prefix
+  lab_role_arn           = data.aws_iam_role.lab.arn
+  notifier_function_name = "${local.prefix}-notifier"
   task_tags = {
     project = "safemerge"
     env     = var.env

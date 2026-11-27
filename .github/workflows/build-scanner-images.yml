@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - "scanners/**"
+      - "services/sast-worker/**"
       - ".github/workflows/build-scanner-images.yml"
   workflow_dispatch:
 
@@ -43,18 +44,24 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_SHA::7}"
-          for NAME in sast pentest; do
+          # build_and_push <name> <dockerfile> <context>
+          build_and_push() {
+            NAME="$1"; DOCKERFILE="$2"; CONTEXT="$3"
             REPO="safemerge-$NAME"
             IMAGE="$REGISTRY/$REPO:$TAG"
             # Immutable tags: re-running the same commit must not push the same tag again
             if aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$TAG" > /dev/null 2>&1; then
               echo "$IMAGE already exists, skipping"
             else
-              docker build --platform linux/amd64 --provenance=false -t "$IMAGE" "scanners/$NAME"
+              docker build --platform linux/amd64 --provenance=false -f "$DOCKERFILE" -t "$IMAGE" "$CONTEXT"
               docker push "$IMAGE"
               echo "Pushed $IMAGE"
             fi
-          done
+          }
+          # The SAST image is the worker (services/sast-worker) bundled with the scanner,
+          # so it is built from the repository root.
+          build_and_push sast services/sast-worker/Dockerfile .
+          build_and_push pentest scanners/pentest/Dockerfile scanners/pentest
           {
             echo "### Image tags for Terraform"
             echo ""

@@ -32,6 +32,8 @@ test("HIGH finding fails", async () => {
   assert.equal(r.status, "fail");
   assert.equal(log.notified[0].state, "failure");
   assert.equal(log.notified[0].context, "safemerge/sast");
+  assert.equal(log.notified[0].pr, 7);
+  assert.equal(log.scans[0].counts.HIGH, 1);
   assert.equal(log.scans[0].status, "fail");
   assert.equal(log.scans[0].reportKey, "reports/o/r/sid.json");
   assert.equal(log.reports[0][1].findings[0].file, "a.js");
@@ -46,7 +48,8 @@ test("clean passes, only js files scanned", async () => {
   const { deps, log } = setup();
   await processJob(job(), deps);
   assert.deepEqual(log.reports[0][1].filesScanned, ["a.js", "d/e.mjs"]);
-  assert.equal(log.scans[0].counts.high, 0);
+  assert.equal(log.scans[0].counts.HIGH, 0);
+  assert.deepEqual(Object.keys(log.scans[0].counts), ["HIGH", "MEDIUM", "LOW"]);
 });
 test("dedupes same path/id/line", async () => {
   const { deps, log } = setup({ vulns: { "a.js": [V("X", "HIGH"), V("X", "HIGH")] } });

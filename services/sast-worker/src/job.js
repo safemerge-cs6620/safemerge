@@ -52,8 +52,8 @@ export async function processJob(job, deps) {
   }
 
   const count = (s) => findings.filter((x) => x.severity === s).length;
-  const counts = { high: count("HIGH"), medium: count("MEDIUM"), low: count("LOW") };
-  const status = counts.high > 0 ? "fail" : "pass";
+  const counts = { HIGH: count("HIGH"), MEDIUM: count("MEDIUM"), LOW: count("LOW") };
+  const status = counts.HIGH > 0 ? "fail" : "pass";
   const reportKey = `reports/${job.repo}/${scanId}.json`;
 
   await store.putReport(reportKey, { scanId, repo: job.repo, pr: job.pr, sha: job.headSha, status, counts, filesScanned: files.map((f) => f.filename), findings });
@@ -66,9 +66,9 @@ export async function processJob(job, deps) {
   const comments = findings.filter((x) => x.severity === "HIGH").slice(0, MAX_COMMENTS)
     .map((x) => ({ path: x.file, line: x.line, body: `**${x.name}** (${x.severity}): ${x.message}` }));
   await notifier.notify({
-    repo: job.repo, sha: job.headSha, context: "safemerge/sast",
+    repo: job.repo, pr: job.pr, sha: job.headSha, context: "safemerge/sast",
     state: status === "fail" ? "failure" : "success",
-    description: status === "fail" ? `${counts.high} high-severity finding(s)` : "No high-severity findings",
+    description: status === "fail" ? `${counts.HIGH} high-severity finding(s)` : "No high-severity findings",
     targetUrl: deps.dashboardUrl || undefined, comments,
   });
 
